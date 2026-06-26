@@ -14,6 +14,13 @@ const AGENT_LABELS: Record<AgentType, string> = {
   tco: "TCO Agent",
 };
 
+const AGENT_MODEL: Record<AgentType, string> = {
+  discovery:  "llama-3.1-8b",
+  workload:   "llama-3.1-8b",
+  deployment: "llama-3.1-8b",
+  tco:        "llama-3.1-8b ✦ math validated",
+};
+
 const AGENT_ORDER: AgentType[] = ["discovery", "workload", "deployment", "tco"];
 
 const AGENT_BADGE: Record<AgentType, string> = {
@@ -69,27 +76,34 @@ function Pill({ text, color = "zinc" }: { text: string; color?: string }) {
 // ── Agent output renderers ─────────────────────────────────────────────────────
 
 function DiscoveryCard({ data }: { data: DiscoveryOutput }) {
+  const d = data ?? {};
+  const dat = (d as DiscoveryOutput).data ?? {} as DiscoveryOutput["data"];
+  const scale = (d as DiscoveryOutput).scale ?? {} as DiscoveryOutput["scale"];
+  const constraints = (d as DiscoveryOutput).constraints ?? {} as DiscoveryOutput["constraints"];
+  const metrics: string[] = (d as DiscoveryOutput).success_metrics ?? [];
   return (
     <div className="space-y-4">
-      <KV label="Use Case" value={data.use_case} />
+      <KV label="Use Case" value={(d as DiscoveryOutput).use_case ?? "—"} />
       <div className="grid grid-cols-2 gap-3">
-        <KV label="Data Type" value={data.data.type} />
-        <KV label="Volume" value={data.data.volume} />
-        <KV label="Format" value={data.data.format} />
-        <KV label="Users" value={data.scale.users} />
-        <KV label="Requests/sec" value={data.scale.requests_per_sec} />
-        <KV label="Latency Tolerance" value={data.scale.latency_tolerance} />
-        <KV label="Budget" value={data.constraints.budget} />
-        <KV label="Timeline" value={data.constraints.timeline} />
-        <KV label="Team Size" value={data.constraints.team_size} />
-        <KV label="Regulatory" value={data.constraints.regulatory} />
+        <KV label="Data Type" value={dat.type ?? "—"} />
+        <KV label="Volume" value={dat.volume ?? "—"} />
+        <KV label="Format" value={dat.format ?? "—"} />
+        <KV label="Users" value={scale.users ?? "—"} />
+        <KV label="Requests/sec" value={scale.requests_per_sec ?? "—"} />
+        <KV label="Latency Tolerance" value={scale.latency_tolerance ?? "—"} />
+        <KV label="Budget" value={constraints.budget ?? "—"} />
+        <KV label="Timeline" value={constraints.timeline ?? "—"} />
+        <KV label="Team Size" value={constraints.team_size ?? "—"} />
+        <KV label="Regulatory" value={constraints.regulatory ?? "—"} />
       </div>
-      <div>
-        <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Success Metrics</span>
-        <div className="flex flex-wrap gap-2 mt-1">
-          {data.success_metrics.map((m, i) => <Pill key={i} text={m} color="blue" />)}
+      {metrics.length > 0 && (
+        <div>
+          <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Success Metrics</span>
+          <div className="flex flex-wrap gap-2 mt-1">
+            {metrics.map((m, i) => <Pill key={i} text={m} color="blue" />)}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -115,7 +129,7 @@ function DeploymentCard({ data }: { data: DeploymentOutput }) {
   return (
     <div className="space-y-4">
       <div className="space-y-3">
-        {data.options.map((opt, i) => (
+        {(data.options ?? []).map((opt, i) => (
           <div key={i} className={`rounded-xl border p-4 space-y-2 ${opt.option === data.recommended ? "border-green-400 bg-green-50" : "border-zinc-200 bg-white"}`}>
             <div className="flex items-center justify-between flex-wrap gap-2">
               <span className="text-sm font-semibold text-zinc-800">{opt.option}</span>
@@ -125,16 +139,16 @@ function DeploymentCard({ data }: { data: DeploymentOutput }) {
               </div>
             </div>
             <div className="flex flex-wrap gap-1">
-              {opt.provider_examples.map((p, j) => <Pill key={j} text={p} color="zinc" />)}
+              {(opt.provider_examples ?? []).map((p, j) => <Pill key={j} text={p} color="zinc" />)}
             </div>
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
                 <p className="font-medium text-green-600 mb-1">Pros</p>
-                <ul className="space-y-0.5 text-zinc-600">{opt.pros.map((p, j) => <li key={j}>+ {p}</li>)}</ul>
+                <ul className="space-y-0.5 text-zinc-600">{(opt.pros ?? []).map((p, j) => <li key={j}>+ {p}</li>)}</ul>
               </div>
               <div>
                 <p className="font-medium text-red-500 mb-1">Cons</p>
-                <ul className="space-y-0.5 text-zinc-600">{opt.cons.map((c, j) => <li key={j}>− {c}</li>)}</ul>
+                <ul className="space-y-0.5 text-zinc-600">{(opt.cons ?? []).map((c, j) => <li key={j}>− {c}</li>)}</ul>
               </div>
             </div>
             <p className="text-xs text-zinc-500"><span className="font-medium">Best for:</span> {opt.best_for}</p>
@@ -197,11 +211,11 @@ function TcoCard({ data }: { data: TcoOutput }) {
         <p className="text-xs font-semibold text-orange-700 mb-1">Key Insight</p>
         <p className="text-xs text-orange-800">{data.key_insight}</p>
       </div>
-      {data.assumptions?.length > 0 && (
+      {(data.assumptions ?? []).length > 0 && (
         <div>
           <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Assumptions</span>
           <ul className="mt-1 space-y-0.5">
-            {data.assumptions.map((a, i) => <li key={i} className="text-xs text-zinc-500">· {a}</li>)}
+            {(data.assumptions ?? []).map((a, i) => <li key={i} className="text-xs text-zinc-500">· {a}</li>)}
           </ul>
         </div>
       )}
@@ -294,8 +308,9 @@ export default function Home() {
           const data = JSON.parse(line.slice(6));
           if (data.type === "agent_start") {
             setPipeline((p) => ({ ...p, currentAgent: data.agent }));
-          } else if (data.type === "chunk") {
-            setAgentRaw((p) => ({ ...p, [data.agent]: (p[data.agent as AgentType] ?? "") + data.chunk }));
+          } else if (data.type === "agent_done") {
+            setAgentRaw((p) => ({ ...p, [data.agent]: data.raw }));
+            setPipeline((p) => ({ ...p, currentAgent: null }));
           } else if (data.type === "done") {
             setPipeline((p) => ({ ...p, status: "completed", currentAgent: null }));
             fetchSessions();
@@ -388,15 +403,18 @@ export default function Home() {
 
               return (
                 <div key={agent} className={`rounded-2xl border-l-4 border border-zinc-200 bg-white p-6 space-y-4 ${AGENT_BORDER[agent]}`}>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${AGENT_BADGE[agent]}`}>{AGENT_LABELS[agent]}</span>
+                    <span className="text-xs text-zinc-400 font-mono">{AGENT_MODEL[agent]}</span>
                     {isCurrent && <span className="text-xs text-zinc-400 animate-pulse">{raw ? "writing..." : "thinking..."}</span>}
                   </div>
-                  {raw && (
-                    isCurrent
-                      ? <pre className="text-xs text-zinc-500 whitespace-pre-wrap font-mono">{raw}</pre>
-                      : <AgentOutputCard agent={agent} raw={raw} />
+                  {isCurrent && !raw && (
+                    <div className="flex items-center gap-2 py-4">
+                      <div className="w-4 h-4 border-2 border-zinc-300 border-t-blue-500 rounded-full animate-spin" />
+                      <span className="text-sm text-zinc-400">Running {AGENT_LABELS[agent]}...</span>
+                    </div>
                   )}
+                  {raw && <AgentOutputCard agent={agent} raw={raw} />}
                 </div>
               );
             })}

@@ -29,7 +29,7 @@ export async function saveSession(
 
   if (error) {
     console.error("Failed to save session:", JSON.stringify(error));
-    throw new Error(JSON.stringify(error));
+    return null;
   }
   return data;
 }

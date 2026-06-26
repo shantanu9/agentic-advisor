@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { runPipeline } from "@/lib/pipeline";
 import { saveSession } from "@/lib/sessions";
-import { PipelineResult } from "@/types/agents";
+import { PipelineResult, AgentType } from "@/types/agents";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -17,35 +17,32 @@ export async function POST(req: NextRequest) {
   }
 
   const encoder = new TextEncoder();
+  const agentResults: Partial<PipelineResult> = {};
 
   const stream = new ReadableStream({
     async start(controller) {
       const send = (data: object) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+        try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)); } catch {}
       };
 
       try {
-        let pipelineResult: PipelineResult | null = null;
-
-        pipelineResult = await runPipeline(requirement, (agent, chunk) => {
+        await runPipeline(requirement, (agent: AgentType, chunk: string) => {
           if (chunk === "") {
             send({ type: "agent_start", agent });
-          } else {
-            send({ type: "chunk", agent, chunk });
+          } else if (chunk === "__done__") {
+            // Agent completed — send its full result
+            const result = agentResults[agent];
+            if (result) send({ type: "agent_done", agent, raw: result.raw });
           }
-        });
+        }, agentResults);
 
-        // Save to Supabase
-        let session = null;
-        let saveError = null;
-        try {
-          session = await saveSession(requirement, pipelineResult);
-        } catch (e) {
-          saveError = String(e);
-        }
-        send({ type: "done", sessionId: session?.id ?? null, saveError });
-      } catch (err) {
-        send({ type: "error", message: String(err) });
+        const result = agentResults as PipelineResult;
+        const session = await saveSession(requirement, result).catch(() => null);
+        send({ type: "done", sessionId: session?.id ?? null });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("Pipeline error:", msg);
+        send({ type: "error", message: msg });
       } finally {
         controller.close();
       }
