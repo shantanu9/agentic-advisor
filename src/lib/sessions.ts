@@ -19,10 +19,10 @@ export async function saveSession(
     .from("sessions")
     .insert({
       requirement,
-      discovery: result.discovery.output,
-      workload: result.workload.output,
-      deployment: result.deployment.output,
-      tco: result.tco.output,
+      discovery: result.discovery.raw,
+      workload: result.workload.raw,
+      deployment: result.deployment.raw,
+      tco: result.tco.raw,
     })
     .select()
     .single();

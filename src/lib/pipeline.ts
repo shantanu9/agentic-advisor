@@ -1,64 +1,87 @@
 import Groq from "groq-sdk";
-import { AgentResponse, PipelineResult } from "@/types/agents";
+import {
+  AgentResponse, AgentType, PipelineResult,
+  DiscoveryOutput, WorkloadOutput, DeploymentOutput, TcoOutput,
+} from "@/types/agents";
+import { getRelevantGpus, formatGpuContext } from "./gpu-knowledge-base";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const MODEL = "llama-3.3-70b-versatile";
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY, timeout: 120000 });
+const MODEL = "llama-3.1-8b-instant";
 
-const SYSTEM_PROMPTS: Record<string, string> = {
-  discovery: `You are a Discovery Agent specializing in AI project scoping.
-Extract and structure the following from the user's business requirement:
-1. Core use case (what problem is being solved)
-2. Data available (type, volume, format)
-3. Scale requirements (users, requests/sec, latency tolerance)
-4. Constraints (budget, timeline, regulatory, team expertise)
-5. Success metrics
+const SYSTEM_PROMPTS: Record<AgentType, string> = {
+  discovery: `You are a Discovery Agent. Extract structured information from the business requirement.
+Respond with ONLY valid JSON matching this exact schema (no markdown, no extra text):
+{
+  "use_case": "string — one sentence describing the core problem",
+  "data": { "type": "string", "volume": "string", "format": "string" },
+  "scale": { "users": "string", "requests_per_sec": "string", "latency_tolerance": "string" },
+  "constraints": { "budget": "string", "timeline": "string", "team_size": "string", "regulatory": "string" },
+  "success_metrics": ["string", "string"]
+}
+If information is not provided, make a reasonable inference and note it. Output ONLY the JSON object.`,
 
-Respond in clear sections with headers. Be concise but thorough.`,
+  workload: `You are a Workload Profiling Agent. Classify the AI workload based on discovery output.
+Respond with ONLY valid JSON matching this exact schema (no markdown, no extra text):
+{
+  "primary_type": "one of: Training | Inference | Fine-tuning | RAG | Agentic | Multi-agent | Mixed",
+  "compute_intensity": "one of: Low | Medium | High | Extreme",
+  "memory_requirement": "string e.g. '24GB VRAM minimum'",
+  "latency_class": "one of: Real-time | Near-real-time | Batch",
+  "model_size_recommendation": "one of: <7B | 7B-70B | >70B",
+  "data_pipeline_needed": true or false,
+  "reasoning": "string — 2-3 sentences explaining your classification"
+}
+Output ONLY the JSON object.`,
 
-  workload: `You are a Workload Profiling Agent specializing in AI/ML system design.
-Based on the discovery output provided, classify and profile the workload:
-1. Primary workload type: Training / Inference / Fine-tuning / RAG / Agentic / Multi-agent
-2. Compute intensity (low/medium/high/extreme)
-3. Memory requirements
-4. Latency requirements (real-time / near-real-time / batch)
-5. Data pipeline needs
-6. Model size recommendation (small <7B / medium 7-70B / large >70B)
+  deployment: `You are a Deployment Options Agent. Given the discovery, workload profile, and GPU knowledge base below, recommend deployment options.
+Respond with ONLY valid JSON matching this exact schema (no markdown, no extra text):
+{
+  "options": [
+    {
+      "option": "string e.g. 'Frontier LLM API'",
+      "provider_examples": ["string"],
+      "estimated_cost_usd_month": "string e.g. '$200-500/month'",
+      "pros": ["string"],
+      "cons": ["string"],
+      "best_for": "string"
+    }
+  ],
+  "recommended": "string — name of recommended option",
+  "recommendation_reason": "string — 2-3 sentences",
+  "gpu_specs_used": ["string — GPU models referenced"]
+}
+Include 2-3 options (API, Cloud GPU, On-prem if applicable). Use real GPU specs from the knowledge base. Output ONLY the JSON object.`,
 
-Respond in clear sections with headers.`,
-
-  deployment: `You are a Deployment Options Agent specializing in AI infrastructure.
-Based on the discovery and workload profile provided, recommend deployment options:
-1. Option A: Frontier LLM API (OpenAI/Anthropic/Groq/etc.) — pros, cons, best for
-2. Option B: Cloud GPU (AWS/GCP/Azure/Lambda Labs) — pros, cons, best for
-3. Option C: On-premises GPU — pros, cons, best for
-4. RECOMMENDED option with clear justification
-5. Key tradeoffs summary
-
-Respond in clear sections with headers. Be specific about which providers/services.`,
-
-  tco: `You are a TCO (Total Cost of Ownership) Agent specializing in AI infrastructure cost modeling.
-Based on all previous agent outputs, provide a detailed cost breakdown:
-
-YEAR 1 COSTS (in both INR and USD, 1 USD = 84 INR):
-- Infrastructure/compute costs
-- API costs (if applicable)
-- Development/setup costs
-- Operational costs
-
-YEAR 3 COSTS (cumulative, accounting for scale):
-- Infrastructure/compute costs
-- Licensing/subscription costs
-- Team/operational costs
-- Total 3-year TCO
-
-Format all costs clearly in both INR (₹) and USD ($). Include assumptions made.`,
+  tco: `You are a TCO Agent. Calculate total cost of ownership based on all previous agent outputs.
+Use 1 USD = 84 INR. year3_usd = CUMULATIVE 3-year total for that category (not per-year).
+Respond with ONLY valid JSON matching this exact schema (no markdown, no extra text):
+{
+  "assumptions": ["string"],
+  "costs": [
+    { "category": "string", "year1_usd": number, "year3_usd": number }
+  ],
+  "total_year1_usd": number,
+  "total_year3_usd": number,
+  "total_year1_inr": number,
+  "total_year3_inr": number,
+  "key_insight": "string — most important cost observation in 1-2 sentences"
+}
+Rules: year3_usd must always be >= year1_usd. total_year3_usd = sum of all year3_usd values. total_year1_inr = total_year1_usd * 84. total_year3_inr = total_year3_usd * 84. All cost values must be numbers. Include: Infrastructure/Compute, Development, Operations, Licensing. Output ONLY the JSON object.`,
 };
 
+function parseJson<T>(raw: string): T {
+  const cleaned = raw
+    .replace(/```json\n?/g, "")
+    .replace(/```\n?/g, "")
+    .trim();
+  return JSON.parse(cleaned) as T;
+}
+
 async function runAgent(
-  agentType: string,
+  agentType: AgentType,
   userMessage: string,
   onChunk?: (chunk: string) => void
-): Promise<string> {
+): Promise<{ output: unknown; raw: string }> {
   const stream = await groq.chat.completions.create({
     model: MODEL,
     messages: [
@@ -66,73 +89,84 @@ async function runAgent(
       { role: "user", content: userMessage },
     ],
     stream: true,
-    max_tokens: 1500,
+    max_tokens: 800,
+    temperature: 0.2,
   });
 
-  let fullText = "";
+  let raw = "";
   for await (const chunk of stream) {
     const delta = chunk.choices[0]?.delta?.content ?? "";
     if (delta) {
-      fullText += delta;
+      raw += delta;
       onChunk?.(delta);
     }
   }
-  return fullText;
+
+  const output = parseJson(raw);
+  return { output, raw };
 }
 
 export async function runPipeline(
   requirement: string,
-  onProgress?: (agent: string, chunk: string) => void
+  onProgress?: (agent: AgentType, chunk: string) => void
 ): Promise<PipelineResult> {
-  // Discovery Agent
+  // 1. Discovery
   onProgress?.("discovery", "");
-  const discoveryOutput = await runAgent(
+  const discovery = await runAgent(
     "discovery",
     `Business Requirement: ${requirement}`,
-    (chunk) => onProgress?.("discovery", chunk)
+    (c) => onProgress?.("discovery", c)
   );
   const discoveryResponse: AgentResponse = {
     agent: "discovery",
-    output: discoveryOutput,
+    output: discovery.output as DiscoveryOutput,
+    raw: discovery.raw,
     completedAt: new Date(),
   };
 
-  // Workload Profiling Agent
+  // 2. Workload
   onProgress?.("workload", "");
-  const workloadOutput = await runAgent(
+  const workload = await runAgent(
     "workload",
-    `Discovery Output:\n${discoveryOutput}\n\nOriginal Requirement: ${requirement}`,
-    (chunk) => onProgress?.("workload", chunk)
+    `Discovery Output:\n${discovery.raw}\n\nOriginal Requirement: ${requirement}`,
+    (c) => onProgress?.("workload", c)
   );
   const workloadResponse: AgentResponse = {
     agent: "workload",
-    output: workloadOutput,
+    output: workload.output as WorkloadOutput,
+    raw: workload.raw,
     completedAt: new Date(),
   };
 
-  // Deployment Options Agent
+  // 3. Deployment — inject GPU knowledge base
+  const workloadData = workload.output as WorkloadOutput;
+  const relevantGpus = getRelevantGpus(workloadData.primary_type, workloadData.model_size_recommendation);
+  const gpuContext = formatGpuContext(relevantGpus);
+
   onProgress?.("deployment", "");
-  const deploymentOutput = await runAgent(
+  const deployment = await runAgent(
     "deployment",
-    `Discovery Output:\n${discoveryOutput}\n\nWorkload Profile:\n${workloadOutput}\n\nOriginal Requirement: ${requirement}`,
-    (chunk) => onProgress?.("deployment", chunk)
+    `Requirement: ${requirement}\n\nWorkload: ${workload.raw}\n\nGPU Options:\n${gpuContext}`,
+    (c) => onProgress?.("deployment", c)
   );
   const deploymentResponse: AgentResponse = {
     agent: "deployment",
-    output: deploymentOutput,
+    output: deployment.output as DeploymentOutput,
+    raw: deployment.raw,
     completedAt: new Date(),
   };
 
-  // TCO Agent
+  // 4. TCO
   onProgress?.("tco", "");
-  const tcoOutput = await runAgent(
+  const tco = await runAgent(
     "tco",
-    `Discovery Output:\n${discoveryOutput}\n\nWorkload Profile:\n${workloadOutput}\n\nDeployment Recommendation:\n${deploymentOutput}\n\nOriginal Requirement: ${requirement}`,
-    (chunk) => onProgress?.("tco", chunk)
+    `Requirement: ${requirement}\n\nWorkload: ${workload.raw}\n\nDeployment: ${deployment.raw}`,
+    (c) => onProgress?.("tco", c)
   );
   const tcoResponse: AgentResponse = {
     agent: "tco",
-    output: tcoOutput,
+    output: tco.output as TcoOutput,
+    raw: tco.raw,
     completedAt: new Date(),
   };
 
