@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { runPipeline } from "@/lib/pipeline";
 import { saveSession } from "@/lib/sessions";
+import { saveMetrics, AgentMetrics } from "@/lib/observability";
 import { PipelineResult, AgentType } from "@/types/agents";
 
 export const runtime = "nodejs";
@@ -26,19 +27,23 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        await runPipeline(requirement, (agent: AgentType, chunk: string) => {
-          if (chunk === "") {
-            send({ type: "agent_start", agent });
-          } else if (chunk === "__done__") {
-            // Agent completed — send its full result
-            const result = agentResults[agent];
-            if (result) send({ type: "agent_done", agent, raw: result.raw });
-          }
-        }, agentResults);
+        const { pipeline, metrics } = await runPipeline(
+          requirement,
+          (agent: AgentType, chunk: string, agentMetric?: AgentMetrics) => {
+            if (chunk === "") {
+              send({ type: "agent_start", agent });
+            } else if (chunk === "__done__") {
+              const result = agentResults[agent];
+              if (result) send({ type: "agent_done", agent, raw: result.raw, metrics: agentMetric ?? null });
+            }
+          },
+          agentResults
+        );
 
-        const result = agentResults as PipelineResult;
+        const result = pipeline as PipelineResult;
         const session = await saveSession(requirement, result).catch(() => null);
-        send({ type: "done", sessionId: session?.id ?? null });
+        await saveMetrics(session?.id ?? null, metrics).catch(() => null);
+        send({ type: "done", sessionId: session?.id ?? null, metrics });
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error("Pipeline error:", msg);

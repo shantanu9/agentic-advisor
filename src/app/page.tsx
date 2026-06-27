@@ -6,6 +6,7 @@ import {
   DiscoveryOutput, WorkloadOutput, DeploymentOutput, TcoOutput,
 } from "@/types/agents";
 import { Session } from "@/lib/sessions";
+import { AgentMetrics } from "@/lib/observability";
 
 const AGENT_LABELS: Record<AgentType, string> = {
   discovery: "Discovery Agent",
@@ -249,6 +250,7 @@ export default function Home() {
   const [requirement, setRequirement] = useState("");
   const [pipeline, setPipeline] = useState<PipelineState>({ status: "idle", currentAgent: null, results: {} });
   const [agentRaw, setAgentRaw] = useState<Partial<Record<AgentType, string>>>({});
+  const [agentMetrics, setAgentMetrics] = useState<Partial<Record<AgentType, AgentMetrics>>>({});
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
@@ -281,6 +283,7 @@ export default function Home() {
     if (!requirement.trim()) return;
     abortRef.current = new AbortController();
     setAgentRaw({});
+    setAgentMetrics({});
     setPipeline({ status: "running", currentAgent: null, results: {} });
 
     try {
@@ -310,6 +313,7 @@ export default function Home() {
             setPipeline((p) => ({ ...p, currentAgent: data.agent }));
           } else if (data.type === "agent_done") {
             setAgentRaw((p) => ({ ...p, [data.agent]: data.raw }));
+            if (data.metrics) setAgentMetrics((p) => ({ ...p, [data.agent]: data.metrics }));
             setPipeline((p) => ({ ...p, currentAgent: null }));
           } else if (data.type === "done") {
             setPipeline((p) => ({ ...p, status: "completed", currentAgent: null }));
@@ -399,14 +403,22 @@ export default function Home() {
             {AGENT_ORDER.map((agent) => {
               const raw = agentRaw[agent];
               const isCurrent = pipeline.currentAgent === agent;
+              const m = agentMetrics[agent];
               if (!raw && !isCurrent) return null;
 
               return (
                 <div key={agent} className={`rounded-2xl border-l-4 border border-zinc-200 bg-white p-6 space-y-4 ${AGENT_BORDER[agent]}`}>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${AGENT_BADGE[agent]}`}>{AGENT_LABELS[agent]}</span>
-                    <span className="text-xs text-zinc-400 font-mono">{AGENT_MODEL[agent]}</span>
+                    <span className="text-xs text-zinc-400 font-mono">{m ? m.model : AGENT_MODEL[agent]}</span>
                     {isCurrent && <span className="text-xs text-zinc-400 animate-pulse">{raw ? "writing..." : "thinking..."}</span>}
+                    {m && (
+                      <>
+                        <span className="text-xs bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded-full font-mono">{(m.latency_ms / 1000).toFixed(1)}s</span>
+                        <span className="text-xs bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded-full font-mono">{(m.input_tokens + m.output_tokens).toLocaleString()} tok</span>
+                        <span className="text-xs bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded-full font-mono">${m.cost_usd.toFixed(5)}</span>
+                      </>
+                    )}
                   </div>
                   {isCurrent && !raw && (
                     <div className="flex items-center gap-2 py-4">

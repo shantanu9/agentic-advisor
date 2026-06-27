@@ -45,7 +45,7 @@ export async function listSessions(): Promise<Session[]> {
     console.error("Failed to list sessions:", JSON.stringify(error));
     return [];
   }
-  return data ?? [];
+  return (data ?? []) as Session[];
 }
 
 export async function getSession(id: string): Promise<Session | null> {

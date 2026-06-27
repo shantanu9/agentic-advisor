@@ -4,12 +4,12 @@ import {
   DiscoveryOutput, WorkloadOutput, DeploymentOutput, TcoOutput, TcoCost,
 } from "@/types/agents";
 import { getRelevantGpus, formatGpuContext } from "./gpu-knowledge-base";
+import { AgentMetrics, calcCost, summarizeMetrics, RunMetrics } from "./observability";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY, timeout: 60000 });
 const MODEL_PRIMARY  = "llama-3.1-8b-instant";
-const MODEL_FALLBACK = "gemma2-9b-it"; // fallback if primary times out
+const MODEL_FALLBACK = "gemma2-9b-it";
 
-// Model router — upgrade per agent when on paid tier
 const MODEL_ROUTER: Record<AgentType, string> = {
   discovery:  MODEL_PRIMARY,
   workload:   MODEL_PRIMARY,
@@ -31,7 +31,6 @@ const SYSTEM_PROMPTS: Record<AgentType, string> = {
 {"assumptions":["string"],"costs":[{"category":"string","year1_usd":0,"year3_usd":0}],"total_year1_usd":0,"total_year3_usd":0,"total_year1_inr":0,"total_year3_inr":0,"key_insight":"string"}`,
 };
 
-// Pure-code TCO math validator — never trust LLM arithmetic
 function validateTco(tco: TcoOutput): TcoOutput {
   const costs: TcoCost[] = (tco.costs ?? []).map((r) => ({
     ...r,
@@ -41,8 +40,7 @@ function validateTco(tco: TcoOutput): TcoOutput {
   const year1 = costs.reduce((s, r) => s + r.year1_usd, 0);
   const year3 = costs.reduce((s, r) => s + r.year3_usd, 0);
   return {
-    ...tco,
-    costs,
+    ...tco, costs,
     total_year1_usd: year1,
     total_year3_usd: year3,
     total_year1_inr: Math.round(year1 * 84),
@@ -55,7 +53,9 @@ function safeParseJson<T>(raw: string): T {
   return JSON.parse(match ? match[0] : raw) as T;
 }
 
-async function callGroq(model: string, agentType: AgentType, userMessage: string): Promise<string> {
+interface GroqResult { content: string; model: string; input_tokens: number; output_tokens: number; }
+
+async function callGroq(model: string, agentType: AgentType, userMessage: string): Promise<GroqResult> {
   const response = await groq.chat.completions.create({
     model,
     messages: [
@@ -66,55 +66,75 @@ async function callGroq(model: string, agentType: AgentType, userMessage: string
     max_tokens: 600,
     temperature: 0.1,
   });
-  return response.choices[0]?.message?.content ?? "";
+  return {
+    content: response.choices[0]?.message?.content ?? "",
+    model,
+    input_tokens: response.usage?.prompt_tokens ?? 0,
+    output_tokens: response.usage?.completion_tokens ?? 0,
+  };
 }
 
-async function runAgent(agentType: AgentType, userMessage: string): Promise<string> {
+async function runAgent(agentType: AgentType, userMessage: string): Promise<{ result: GroqResult; latency_ms: number }> {
+  const start = Date.now();
   try {
-    return await callGroq(MODEL_ROUTER[agentType], agentType, userMessage);
+    const result = await callGroq(MODEL_ROUTER[agentType], agentType, userMessage);
+    return { result, latency_ms: Date.now() - start };
   } catch (err) {
     console.warn(`Primary model failed for ${agentType}, retrying with fallback:`, String(err));
-    return await callGroq(MODEL_FALLBACK, agentType, userMessage);
+    const result = await callGroq(MODEL_FALLBACK, agentType, userMessage);
+    return { result, latency_ms: Date.now() - start };
   }
 }
 
 export async function runPipeline(
   requirement: string,
-  onProgress?: (agent: AgentType, chunk: string) => void,
+  onProgress?: (agent: AgentType, chunk: string, agentMetric?: AgentMetrics) => void,
   resultsAccumulator?: Partial<PipelineResult>
-): Promise<PipelineResult> {
+): Promise<{ pipeline: PipelineResult; metrics: RunMetrics }> {
+  const agentMetrics: AgentMetrics[] = [];
+
   // 1. Discovery
   onProgress?.("discovery", "");
-  const discoveryRaw = await runAgent("discovery", `Requirement: ${requirement}`);
-  const discoveryData = safeParseJson<DiscoveryOutput>(discoveryRaw);
+  const { result: dr, latency_ms: dl } = await runAgent("discovery", `Requirement: ${requirement}`);
+  const discoveryData = safeParseJson<DiscoveryOutput>(dr.content);
+  const dm: AgentMetrics = { agent: "discovery", model: dr.model, latency_ms: dl, input_tokens: dr.input_tokens, output_tokens: dr.output_tokens, cost_usd: calcCost(dr.model, dr.input_tokens, dr.output_tokens) };
+  agentMetrics.push(dm);
   const discoveryResponse: AgentResponse = { agent: "discovery", output: discoveryData, raw: JSON.stringify(discoveryData, null, 2), completedAt: new Date() };
   if (resultsAccumulator) resultsAccumulator.discovery = discoveryResponse;
-  onProgress?.("discovery", "__done__");
+  onProgress?.("discovery", "__done__", dm);
 
   // 2. Workload
   onProgress?.("workload", "");
-  const workloadRaw = await runAgent("workload", `Requirement: ${requirement}\nDiscovery: ${JSON.stringify(discoveryData)}`);
-  const workloadData = safeParseJson<WorkloadOutput>(workloadRaw);
+  const { result: wr, latency_ms: wl } = await runAgent("workload", `Requirement: ${requirement}\nDiscovery: ${JSON.stringify(discoveryData)}`);
+  const workloadData = safeParseJson<WorkloadOutput>(wr.content);
+  const wm: AgentMetrics = { agent: "workload", model: wr.model, latency_ms: wl, input_tokens: wr.input_tokens, output_tokens: wr.output_tokens, cost_usd: calcCost(wr.model, wr.input_tokens, wr.output_tokens) };
+  agentMetrics.push(wm);
   const workloadResponse: AgentResponse = { agent: "workload", output: workloadData, raw: JSON.stringify(workloadData, null, 2), completedAt: new Date() };
   if (resultsAccumulator) resultsAccumulator.workload = workloadResponse;
-  onProgress?.("workload", "__done__");
+  onProgress?.("workload", "__done__", wm);
 
   // 3. Deployment — inject GPU knowledge base
   const gpuContext = formatGpuContext(getRelevantGpus(workloadData.primary_type, workloadData.model_size_recommendation));
   onProgress?.("deployment", "");
-  const deploymentRaw = await runAgent("deployment", `Requirement: ${requirement}\nWorkload: ${JSON.stringify(workloadData)}\nGPU specs:\n${gpuContext}`);
-  const deploymentData = safeParseJson<DeploymentOutput>(deploymentRaw);
+  const { result: depr, latency_ms: depl } = await runAgent("deployment", `Requirement: ${requirement}\nWorkload: ${JSON.stringify(workloadData)}\nGPU specs:\n${gpuContext}`);
+  const deploymentData = safeParseJson<DeploymentOutput>(depr.content);
+  const depm: AgentMetrics = { agent: "deployment", model: depr.model, latency_ms: depl, input_tokens: depr.input_tokens, output_tokens: depr.output_tokens, cost_usd: calcCost(depr.model, depr.input_tokens, depr.output_tokens) };
+  agentMetrics.push(depm);
   const deploymentResponse: AgentResponse = { agent: "deployment", output: deploymentData, raw: JSON.stringify(deploymentData, null, 2), completedAt: new Date() };
   if (resultsAccumulator) resultsAccumulator.deployment = deploymentResponse;
-  onProgress?.("deployment", "__done__");
+  onProgress?.("deployment", "__done__", depm);
 
   // 4. TCO — with pure-code math validation
   onProgress?.("tco", "");
-  const tcoRaw = await runAgent("tco", `Requirement: ${requirement}\nWorkload: ${JSON.stringify(workloadData)}\nDeployment: ${JSON.stringify(deploymentData)}`);
-  const tcoData = validateTco(safeParseJson<TcoOutput>(tcoRaw));
+  const { result: tcor, latency_ms: tcol } = await runAgent("tco", `Requirement: ${requirement}\nWorkload: ${JSON.stringify(workloadData)}\nDeployment: ${JSON.stringify(deploymentData)}`);
+  const tcoData = validateTco(safeParseJson<TcoOutput>(tcor.content));
+  const tcom: AgentMetrics = { agent: "tco", model: tcor.model, latency_ms: tcol, input_tokens: tcor.input_tokens, output_tokens: tcor.output_tokens, cost_usd: calcCost(tcor.model, tcor.input_tokens, tcor.output_tokens) };
+  agentMetrics.push(tcom);
   const tcoResponse: AgentResponse = { agent: "tco", output: tcoData, raw: JSON.stringify(tcoData, null, 2), completedAt: new Date() };
   if (resultsAccumulator) resultsAccumulator.tco = tcoResponse;
-  onProgress?.("tco", "__done__");
+  onProgress?.("tco", "__done__", tcom);
 
-  return { discovery: discoveryResponse, workload: workloadResponse, deployment: deploymentResponse, tco: tcoResponse };
+  const pipeline = { discovery: discoveryResponse, workload: workloadResponse, deployment: deploymentResponse, tco: tcoResponse };
+  const metrics = summarizeMetrics(agentMetrics);
+  return { pipeline, metrics };
 }
