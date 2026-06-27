@@ -35,17 +35,22 @@ export async function saveSession(
 }
 
 export async function listSessions(): Promise<Session[]> {
-  const { data, error } = await supabaseAdmin
-    .from("sessions")
-    .select("id, requirement, created_at")
-    .order("created_at", { ascending: false })
-    .limit(20);
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("sessions")
+      .select("id, requirement, created_at")
+      .order("created_at", { ascending: false })
+      .limit(20);
 
-  if (error) {
-    console.error("Failed to list sessions:", JSON.stringify(error));
+    if (error) {
+      console.error("Failed to list sessions:", JSON.stringify(error));
+      return [];
+    }
+    return (data ?? []) as Session[];
+  } catch (e) {
+    console.error("listSessions threw:", String(e));
     return [];
   }
-  return (data ?? []) as Session[];
 }
 
 export async function getSession(id: string): Promise<Session | null> {

@@ -8,5 +8,5 @@ export const supabase = createClient(
 export const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(8000) }) } }
+  { global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(5000) }) } }
 );
