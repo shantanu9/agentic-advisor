@@ -49,8 +49,22 @@ function validateTco(tco: TcoOutput): TcoOutput {
 }
 
 function safeParseJson<T>(raw: string): T {
-  const match = raw.match(/\{[\s\S]*\}/);
-  return JSON.parse(match ? match[0] : raw) as T;
+  try { return JSON.parse(raw) as T; } catch {}
+
+  const start = raw.indexOf("{");
+  if (start === -1) throw new Error("No JSON object in response");
+
+  let depth = 0, inString = false, escaped = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\" && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    if (ch === "}") { depth--; if (depth === 0) return JSON.parse(raw.slice(start, i + 1)) as T; }
+  }
+  throw new Error("No complete JSON object found in response");
 }
 
 interface GroqResult { content: string; model: string; input_tokens: number; output_tokens: number; }
