@@ -4,10 +4,7 @@ import { PipelineResult } from "@/types/agents";
 export interface Session {
   id: string;
   requirement: string;
-  discovery: string;
-  workload: string;
-  deployment: string;
-  tco: string;
+  pipeline_json: string;
   created_at: string;
 }
 
@@ -19,10 +16,7 @@ export async function saveSession(
     .from("sessions")
     .insert({
       requirement,
-      discovery: result.discovery.raw,
-      workload: result.workload.raw,
-      deployment: result.deployment.raw,
-      tco: result.tco.raw,
+      pipeline_json: JSON.stringify(result),
     })
     .select()
     .single();

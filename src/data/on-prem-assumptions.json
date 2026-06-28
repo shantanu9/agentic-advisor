@@ -1,0 +1,22 @@
+{
+  "_note": "All costs in USD. Edit these values to reflect your actual quotes.",
+  "capacity_block_size_gpus": 8,
+  "server_costs": {
+    "gpu_unit_cost_usd": 30000,
+    "cpu_server_cost_usd": 15000,
+    "nvme_storage_cost_usd": 5000,
+    "networking_cost_usd": 8000,
+    "rack_and_power_usd": 4000
+  },
+  "opex_monthly_usd": {
+    "power_per_gpu": 120,
+    "cooling_per_gpu": 40,
+    "maintenance_percent_of_capex": 0.10,
+    "team_cost_per_node": 2000,
+    "software_licenses_per_node": 500
+  },
+  "depreciation_years": 3,
+  "currency": {
+    "usd_to_inr": 84
+  }
+}
