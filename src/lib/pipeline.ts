@@ -7,9 +7,8 @@ import {
 import { runClassifier, deriveModelSizeHintFromClassifier } from "./classifier";
 import { retrieveModels, formatModelsForPrompt, getAllModels } from "./model-db";
 import { runSizingEngine } from "./sizing-engine";
-import { fetchAzurePrices, getPriceForGpu, calcOnPremTco, getOnPremAssumptions } from "./azure-pricing";
+import { calcCloudTco, calcOnPremTco, calcBreakevenMonth } from "./azure-pricing";
 import { AgentMetrics, calcCost, summarizeMetrics, RunMetrics } from "./observability";
-import { getGpuById } from "./gpu-db";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY ?? "";
 const MODEL_PRIMARY   = "llama-3.1-8b-instant";
@@ -243,21 +242,6 @@ const RECOMMENDATION_PROMPT = `${JSON_RULE}You are a senior AI strategy advisor.
 }
 If compliance is PII/PHI/HIPAA/Financial Regulation/Sovereign, override to On-prem even if cloud is cheaper. Set compliance_override: true in that case.`;
 
-// ── Break-even calculation ─────────────────────────────────────────────────────
-
-function calcBreakeven(cloudYear1: number, onPremYear1: number, onPremYear3: number): number | null {
-  const cloudMonthly = cloudYear1 / 12;
-  const onPremCapex = onPremYear1 - (onPremYear3 - onPremYear1) / 2; // rough capex
-  const onPremMonthlyOpex = (onPremYear1 - onPremCapex) / 12;
-
-  for (let m = 1; m <= 36; m++) {
-    const cloudCum = cloudMonthly * m;
-    const onPremCum = onPremCapex + onPremMonthlyOpex * m;
-    if (onPremCum <= cloudCum) return m;
-  }
-  return null;
-}
-
 // ── Progress callback ─────────────────────────────────────────────────────────
 
 export type ProgressCallback = (
@@ -346,25 +330,22 @@ Budget: $${intakeOutput.budget_usd_month}/month`;
   );
   onProgress?.("sizing", "done");
 
-  // ── Stage 5: Deployment + TCO Agent (LLM + Azure pricing) ────────────────
+  // ── Stage 5: Deployment + TCO Agent (LLM + reference cost tables) ───────────
   onProgress?.("deployment_tco", "start");
-  const azurePrices = await fetchAzurePrices();
-  const gpu = getGpuById(sizingOutput.gpu_model.toLowerCase().replace(/ /g, "-").replace("nvidia-", ""))
-    ?? { name: sizingOutput.gpu_model, on_prem_cost_usd_per_year: 42000, memory_gb: sizingOutput.gpu_memory_gb, memory_bandwidth_tbps: 2, fp16_tflops: 312, utilization_factor: 0.8, gpus_per_node: 8, interconnect: "PCIe", tier: "enterprise", best_for: [], azure_sku: "Standard_ND96asr_v4", id: "a100-sxm" };
 
-  const hourlyCloud = getPriceForGpu(azurePrices, sizingOutput.gpu_model, sizingOutput.gpus_required);
-  const cloudYear1 = Math.round(hourlyCloud * 24 * 365);
-  const cloudYear3 = Math.round(cloudYear1 * 3 * 0.95); // ~5% reserved discount over 3yr
+  const cloudCalc  = calcCloudTco(sizingOutput.nodes_required, "1yr");
+  const onPremCalc = calcOnPremTco(sizingOutput.nodes_required);
 
-  const onPremCalc = calcOnPremTco(sizingOutput.gpus_required, gpu.on_prem_cost_usd_per_year, sizingOutput.nodes_required);
-  const onPremYear1 = Math.round(onPremCalc.year1);
-  const onPremYear3 = Math.round(onPremCalc.year3);
+  const cloudYear1   = cloudCalc.total_year1;
+  const cloudYear3   = cloudCalc.total_year3;
+  const onPremYear1  = onPremCalc.total_year1;
+  const onPremYear3  = onPremCalc.total_year3;
 
   const costPerMCloud  = sizingOutput.annual_token_volume > 0 ? (cloudYear1  / sizingOutput.annual_token_volume) * 1_000_000 : 0;
   const costPerMOnPrem = sizingOutput.annual_token_volume > 0 ? (onPremYear1 / sizingOutput.annual_token_volume) * 1_000_000 : 0;
-  const breakevenMonth = calcBreakeven(cloudYear1, onPremYear1, onPremYear3);
+  const breakevenMonth = calcBreakevenMonth(cloudYear1, onPremYear1, onPremYear3);
 
-  const dtcoSystem = buildDeploymentTcoPrompt(cloudYear1, cloudYear3, onPremYear1, onPremYear3, Math.round(costPerMCloud * 100) / 100, Math.round(costPerMOnPrem * 100) / 100, breakevenMonth, gpu.azure_sku ?? "Standard_ND96asr_v4");
+  const dtcoSystem = buildDeploymentTcoPrompt(cloudYear1, cloudYear3, onPremYear1, onPremYear3, Math.round(costPerMCloud * 100) / 100, Math.round(costPerMOnPrem * 100) / 100, breakevenMonth, "Standard_ND96isr_H100_v5");
   const dtcoUser = `Workload: ${classifierOutput.workload_pattern}
 Data Risk: ${classifierOutput.data_risk}
 Compliance: ${intakeOutput.compliance.join(", ") || "None"}
@@ -372,24 +353,30 @@ Deployment Classification: ${sizingOutput.deployment_classification}
 GPUs Required: ${sizingOutput.gpus_required} × ${sizingOutput.gpu_model}
 Nodes: ${sizingOutput.nodes_required}
 Total Memory: ${sizingOutput.total_gpu_memory_gb} GB
-Annual Token Volume: ${sizingOutput.annual_token_volume.toLocaleString()}`;
+Annual Token Volume: ${sizingOutput.annual_token_volume.toLocaleString()}
+Cloud Term: 1-year reserved @ $63.01/hr per node
+Cloud GPU cost (1yr): $${cloudCalc.gpu_year1.toLocaleString()}
+Cloud Services cost (1yr): $${cloudCalc.services_year1.toLocaleString()}
+On-Prem CapEx (yr1): $${(onPremCalc.capex_year1).toLocaleString()}
+On-Prem Annual OpEx: $${onPremCalc.opex_year1.toLocaleString()}
+On-Prem NVAIE (yr1): $${onPremCalc.nvaie_year1.toLocaleString()}`;
 
   const dtcoCall = await callGroq(dtcoSystem, dtcoUser);
   const dtcoRaw = safeParseJson<DeploymentTcoOutput>(dtcoCall.content);
 
-  // Always trust our calculated numbers over LLM numbers
+  // Always trust our calculated numbers over LLM-generated numbers
   const deploymentTcoOutput: DeploymentTcoOutput = {
     ...dtcoRaw,
-    cloud_year1_usd: cloudYear1,
-    cloud_year3_usd: cloudYear3,
-    onprem_year1_usd: onPremYear1,
-    onprem_year3_usd: onPremYear3,
-    cost_per_1m_tokens_cloud: Math.round(costPerMCloud * 100) / 100,
+    cloud_year1_usd:           cloudYear1,
+    cloud_year3_usd:           cloudYear3,
+    onprem_year1_usd:          onPremYear1,
+    onprem_year3_usd:          onPremYear3,
+    cost_per_1m_tokens_cloud:  Math.round(costPerMCloud  * 100) / 100,
     cost_per_1m_tokens_onprem: Math.round(costPerMOnPrem * 100) / 100,
-    lower_cost_year1: cloudYear1 < onPremYear1 ? "Cloud" : "On-prem",
-    lower_cost_year3: cloudYear3 < onPremYear3 ? "Cloud" : "On-prem",
-    breakeven_month: breakevenMonth,
-    cost_rows: onPremCalc.breakdown,
+    lower_cost_year1:          cloudYear1 < onPremYear1 ? "Cloud" : "On-prem",
+    lower_cost_year3:          cloudYear3 < onPremYear3 ? "Cloud" : "On-prem",
+    breakeven_month:           breakevenMonth,
+    cost_rows:                 onPremCalc.cost_rows,
   };
   const dtcoMetric: AgentMetrics = {
     agent: "deployment_tco" as AgentStage,

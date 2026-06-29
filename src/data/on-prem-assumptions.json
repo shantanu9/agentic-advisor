@@ -1,22 +1,34 @@
 {
-  "_note": "All costs in USD. Edit these values to reflect your actual quotes.",
-  "capacity_block_size_gpus": 8,
-  "server_costs": {
-    "gpu_unit_cost_usd": 30000,
-    "cpu_server_cost_usd": 15000,
-    "nvme_storage_cost_usd": 5000,
-    "networking_cost_usd": 8000,
-    "rack_and_power_usd": 4000
+  "_note": "Dell XE9680 — 8 GPU H100 node reference costs. All USD. Source: enterprise quote.",
+  "_scaling": "All costs scale linearly by node_count",
+
+  "capex_per_node": {
+    "compute_year1_usd":  300000,
+    "compute_total_usd":  500000,
+    "storage_usd":         25000,
+    "network_usd":         25000
   },
-  "opex_monthly_usd": {
-    "power_per_gpu": 120,
-    "cooling_per_gpu": 40,
-    "maintenance_percent_of_capex": 0.10,
-    "team_cost_per_node": 2000,
-    "software_licenses_per_node": 500
+
+  "opex_monthly_per_node": {
+    "power_and_cooling":   1000,
+    "data_egress":           10,
+    "vector_db_milvus":     500,
+    "monitoring_logging":   400,
+    "iam_secrets":          200,
+    "infra_ops":           1000,
+    "rack_and_space":      1000,
+    "colo_equinix":         500,
+    "ops_support_8fte":   14080,
+    "backup":                 0,
+    "software_stack":       500
   },
-  "depreciation_years": 3,
-  "currency": {
-    "usd_to_inr": 84
+
+  "nvaie_annual_per_node": 36000,
+
+  "reference_totals": {
+    "monthly_opex":  19190,
+    "annual_opex":  230280,
+    "year1_total":  616280,
+    "year3_total": 1348840
   }
 }
