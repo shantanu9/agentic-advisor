@@ -129,6 +129,47 @@ On-prem (Dell XE9680): Year 1 = $616,280 · Year 3 = $1,348,840
 
 ---
 
+## [D-013] Groq HTTP — Raw `https.request` Instead of Groq SDK
+**Date:** Session 3  
+**Decision:** Replaced the `groq-sdk` client with direct Node.js `https.request` calls to `api.groq.com`.  
+**Rationale:** Next.js App Router patches `globalThis.fetch` for caching/deduplication. The Groq SDK uses the patched `fetch` internally, which caused every call inside the API route to fail with "Request timed out." even though direct Groq API calls (outside Next.js) worked in ~2s. Switching to `https.request` completely bypasses the patched fetch.  
+**Attempted first:** `undici` fetch import — installed and tried, but Turbopack bundled it incorrectly at runtime. Fell back to native `https` module which has no bundler interference.  
+**Also added:** `export const dynamic = "force-dynamic"` and `export const fetchCache = "force-no-store"` to `route.ts` as belt-and-suspenders.
+
+---
+
+## [D-014] JSON Sanitizer — Char-by-Char Single-Quote Replacement
+**Date:** Session 3  
+**Decision:** Replaced the regex-based `sanitizeJson` with a char-by-char walker that converts single-quoted strings to double-quoted, strips markdown fences, and removes trailing commas.  
+**Rationale:** The original regex `([{,]\s*)'([^']+)'(\s*:)` missed single-quoted keys not immediately preceded by `{` or `,` (e.g. after a newline). The fallback model (`gemma2-9b-it`) frequently returned single-quoted JSON. The char-by-char approach correctly handles all positions while skipping content already inside double-quoted strings.  
+**Also added:** `JSON_RULE` prefix prepended to all 4 LLM prompts instructing the model to use double quotes, no markdown, no trailing commas.
+
+---
+
+## [D-015] Retry Logic — 3 Models × 3 Attempts with 2s Delay
+**Date:** Session 3  
+**Decision:** `callGroq` now loops over 3 models, each with up to 3 attempts, with a 2s delay between retries on rate-limit (429) or timeout errors. Hard errors (auth, bad JSON) break immediately and try the next model.  
+**Rationale:** Groq free tier has intermittent rate-limit spikes, especially at the Intake Agent (first call in the pipeline). The previous single-try-per-model approach surfaced errors to the user too quickly. With 3×3, the pipeline self-heals through transient blips without user intervention.  
+**Worst case:** 3 models × 3 attempts × (30s timeout + 2s delay) = ~96s before hard failure.
+
+---
+
+## [D-016] Stage Pills — Click-to-Expand Accordion
+**Date:** Session 3  
+**Decision:** Replaced always-open stage output cards with a single card containing clickable pills. Clicking a completed pill expands a panel beneath the tracker row showing that stage's full detail card and LLM metrics (latency, tokens, cost, model name). Clicking again collapses. Only one panel open at a time.  
+**Rationale:** The previous layout showed all 6 stage cards expanded simultaneously, pushing the Executive Dashboard far down the page and overwhelming first-time users. Accordion keeps the default view compact; power users drill into any stage on demand.  
+**Bug fixed:** `stage_done` SSE events were sending `raw: ""` because `stageOutputs` was populated only after `runPipeline` resolved. Fixed by re-hydrating `stageRaw` from `data.pipeline` in the `done` event handler on the client.  
+**UX detail:** Recommendation stage auto-expands on pipeline completion so the user immediately sees the rationale.
+
+---
+
+## [D-017] Error UX — Retry Button on Pipeline Failure
+**Date:** Session 3  
+**Decision:** Pipeline error state now shows a "Retry pipeline" button alongside the error message and a hint that the failure is usually a transient Groq rate-limit.  
+**Rationale:** Previously, a timeout error left the user staring at red text with no affordance to retry — they had to re-click "Run Advisory Pipeline" and re-read the requirement. The Retry button re-invokes `runPipeline()` with the same requirement already in state.
+
+---
+
 ## Pending / Not Yet Built
 
 | Item | Status | Notes |
