@@ -31,7 +31,7 @@ function httpsPost(body: string): Promise<string> {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body),
         },
-        timeout: 30000,
+        timeout: 12000,
       },
       (res) => {
         let data = "";
@@ -57,7 +57,13 @@ async function callGroq(systemPrompt: string, userMessage: string): Promise<Groq
   });
 
   const call = async (model: string) => {
-    const raw = await httpsPost(JSON.stringify({ ...JSON.parse(body), model }));
+    const deadline = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Request timed out.")), 20000)
+    );
+    const raw = await Promise.race([
+      httpsPost(JSON.stringify({ ...JSON.parse(body), model })),
+      deadline,
+    ]);
     const json = JSON.parse(raw);
     if (json.error) throw new Error(json.error.message ?? JSON.stringify(json.error));
     return {
@@ -72,7 +78,7 @@ async function callGroq(systemPrompt: string, userMessage: string): Promise<Groq
   const MODELS = [MODEL_PRIMARY, MODEL_FALLBACK, MODEL_FALLBACK2];
   let lastErr: unknown;
   for (const model of MODELS) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
         return await call(model);
       } catch (e) {
@@ -81,7 +87,7 @@ async function callGroq(systemPrompt: string, userMessage: string): Promise<Groq
         const isRateLimit = msg.includes("429") || msg.includes("rate") || msg.includes("quota");
         const isTimeout   = msg.includes("timed out") || msg.includes("timeout");
         if (!isRateLimit && !isTimeout) break; // hard error — try next model immediately
-        if (attempt < 2) await new Promise((r) => setTimeout(r, 2000));
+        if (attempt < 1) await new Promise((r) => setTimeout(r, 800));
       }
     }
   }
