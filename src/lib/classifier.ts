@@ -140,8 +140,14 @@ function calcSequenceLength(intake: IntakeOutput): number {
 
 // ── Model size hint ────────────────────────────────────────────────────────────
 
-function deriveModelSizeHint(pattern: WorkloadPattern): "<7B" | "7B-70B" | ">70B" {
-  if (["Training", "Agentic Automation"].includes(pattern)) return ">70B";
+function deriveModelSizeHint(
+  pattern: WorkloadPattern,
+  concurrentUsers = 0,
+): "<7B" | "7B-70B" | ">70B" {
+  if (["Training"].includes(pattern)) return ">70B";
+  if (pattern === "Agentic Automation") return ">70B";
+  // High-concurrency RAG needs a large model for sufficient KV cache throughput
+  if (pattern === "RAG / Enterprise Copilot" && concurrentUsers >= 100) return "7B-70B";
   if (["Fine-tuning", "RAG / Enterprise Copilot"].includes(pattern)) return "7B-70B";
   return "7B-70B";
 }
@@ -175,6 +181,9 @@ export function runClassifier(intake: IntakeOutput): ClassifierOutput {
   };
 }
 
-export function deriveModelSizeHintFromClassifier(pattern: WorkloadPattern): "<7B" | "7B-70B" | ">70B" {
-  return deriveModelSizeHint(pattern);
+export function deriveModelSizeHintFromClassifier(
+  pattern: WorkloadPattern,
+  concurrentUsers = 0,
+): "<7B" | "7B-70B" | ">70B" {
+  return deriveModelSizeHint(pattern, concurrentUsers);
 }

@@ -142,7 +142,7 @@ const MODEL_CATALOG: ModelSpec[] = [
 
 // Workload → preferred model tiers
 const WORKLOAD_TIER_MAP: Record<WorkloadPattern, string[]> = {
-  "RAG / Enterprise Copilot":   ["medium", "large"],
+  "RAG / Enterprise Copilot":   ["large", "medium"],
   "Document AI":                ["small", "medium"],
   "Agentic Automation":         ["large"],
   "Fine-tuning":                ["medium", "large"],
@@ -170,9 +170,9 @@ export function retrieveModels(
   const allowedDeployment = deploymentTypeFromCompliance(compliance);
 
   const sizeFilter = (m: ModelSpec) => {
-    if (modelSizeHint === "<7B")   return m.parameters_b < 7;
-    if (modelSizeHint === "7B-70B") return m.parameters_b >= 7 && m.parameters_b <= 70;
-    return m.parameters_b > 70;
+    if (modelSizeHint === "<7B")    return m.parameters_b < 7;
+    if (modelSizeHint === "7B-70B") return m.parameters_b >= 7 && m.parameters_b <= 72; // include 70–72B tier
+    return m.parameters_b >= 70; // ">70B" includes 70B boundary upward
   };
 
   const deploymentFilter = (m: ModelSpec) =>

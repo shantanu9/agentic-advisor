@@ -294,7 +294,7 @@ export async function runPipeline(
 
   // ── Stage 3: Model Selector Agent (LLM + RAG) ────────────────────────────
   onProgress?.("model_selector", "start");
-  const modelSizeHint = deriveModelSizeHintFromClassifier(classifierOutput.workload_pattern);
+  const modelSizeHint = deriveModelSizeHintFromClassifier(classifierOutput.workload_pattern, intakeOutput.concurrent_users);
   const retrievedModels = retrieveModels(
     classifierOutput.workload_pattern,
     modelSizeHint,

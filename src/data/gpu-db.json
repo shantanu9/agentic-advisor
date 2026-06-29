@@ -9,7 +9,7 @@
     "gpus_per_node": 8,
     "interconnect": "NVLink 4.0",
     "tier": "flagship",
-    "best_for": ["Training", "Large Inference", "Fine-tuning"],
+    "best_for": ["Training", "Large Inference", "Fine-tuning", "RAG", "Enterprise Copilot"],
     "azure_sku": "Standard_ND96asr_v4",
     "on_prem_cost_usd_per_year": 71755
   },
@@ -23,7 +23,7 @@
     "gpus_per_node": 8,
     "interconnect": "PCIe 5.0",
     "tier": "flagship",
-    "best_for": ["Training", "Large Inference"],
+    "best_for": ["Training", "Large Inference", "RAG", "Enterprise Copilot"],
     "azure_sku": "Standard_NC40ads_H100_v5",
     "on_prem_cost_usd_per_year": 65000
   },
