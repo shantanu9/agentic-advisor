@@ -333,8 +333,10 @@ Budget: $${intakeOutput.budget_usd_month}/month`;
   // ── Stage 5: Deployment + TCO Agent (LLM + reference cost tables) ───────────
   onProgress?.("deployment_tco", "start");
 
-  const cloudCalc  = calcCloudTco(sizingOutput.nodes_required, "1yr");
-  const onPremCalc = calcOnPremTco(sizingOutput.nodes_required);
+  const cloudPaygCalc = calcCloudTco(sizingOutput.nodes_required, "payg");
+  const cloudCalc     = calcCloudTco(sizingOutput.nodes_required, "1yr");
+  const cloud3yrCalc  = calcCloudTco(sizingOutput.nodes_required, "3yr");
+  const onPremCalc    = calcOnPremTco(sizingOutput.nodes_required);
 
   const cloudYear1   = cloudCalc.total_year1;
   const cloudYear3   = cloudCalc.total_year3;
@@ -369,6 +371,10 @@ On-Prem NVAIE (yr1): $${onPremCalc.nvaie_year1.toLocaleString()}`;
     ...dtcoRaw,
     cloud_year1_usd:           cloudYear1,
     cloud_year3_usd:           cloudYear3,
+    cloud_payg_year1_usd:      cloudPaygCalc.total_year1,
+    cloud_payg_year3_usd:      cloudPaygCalc.total_year3,
+    cloud_3yr_year1_usd:       cloud3yrCalc.total_year1,
+    cloud_3yr_total_usd:       cloud3yrCalc.total_year3,
     onprem_year1_usd:          onPremYear1,
     onprem_year3_usd:          onPremYear3,
     cost_per_1m_tokens_cloud:  Math.round(costPerMCloud  * 100) / 100,
@@ -376,6 +382,10 @@ On-Prem NVAIE (yr1): $${onPremCalc.nvaie_year1.toLocaleString()}`;
     lower_cost_year1:          cloudYear1 < onPremYear1 ? "Cloud" : "On-prem",
     lower_cost_year3:          cloudYear3 < onPremYear3 ? "Cloud" : "On-prem",
     breakeven_month:           breakevenMonth,
+    cloud_cost_rows_payg:      cloudPaygCalc.cost_rows,
+    cloud_cost_rows_1yr:       cloudCalc.cost_rows,
+    cloud_cost_rows_3yr:       cloud3yrCalc.cost_rows,
+    onprem_cost_rows:          onPremCalc.cost_rows,
     cost_rows:                 onPremCalc.cost_rows,
   };
   const dtcoMetric: AgentMetrics = {

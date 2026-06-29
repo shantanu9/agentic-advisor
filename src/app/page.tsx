@@ -229,50 +229,178 @@ function SizingCard({ data }: { data: SizingOutput }) {
   );
 }
 
+function CostTable({ rows, col1Label = "Year 1", col2Label = "Year 3" }: { rows: DeploymentTcoOutput["cost_rows"]; col1Label?: string; col2Label?: string }) {
+  if (!rows?.length) return null;
+  const total1 = rows.reduce((s, r) => s + r.year1_usd, 0);
+  const total2 = rows.reduce((s, r) => s + r.year3_usd, 0);
+  return (
+    <div className="rounded-xl border border-zinc-200 overflow-hidden">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-zinc-50 border-b">
+            <th className="text-left px-3 py-2 text-zinc-500 font-medium">Cost Element</th>
+            <th className="text-right px-3 py-2 text-zinc-500 font-medium">{col1Label}</th>
+            <th className="text-right px-3 py-2 text-zinc-500 font-medium">{col2Label}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
+              <td className="px-3 py-2 text-zinc-700">{row.category}</td>
+              <td className="px-3 py-2 text-right font-mono text-zinc-800">{fmtUsd(row.year1_usd)}</td>
+              <td className="px-3 py-2 text-right font-mono text-zinc-800">{fmtUsd(row.year3_usd)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="bg-zinc-100 border-t border-zinc-200 font-semibold">
+            <td className="px-3 py-2 text-zinc-700">Total</td>
+            <td className="px-3 py-2 text-right font-mono text-zinc-900">{fmtUsd(total1)}</td>
+            <td className="px-3 py-2 text-right font-mono text-zinc-900">{fmtUsd(total2)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 function DeploymentTcoCard({ data }: { data: DeploymentTcoOutput }) {
+  const [mainTab, setMainTab] = useState<"cloud" | "onprem">("cloud");
+  const [cloudSub, setCloudSub] = useState<"payg" | "1yr" | "3yr">("1yr");
+  const [onpremSub, setOnpremSub] = useState<"1yr" | "3yr">("1yr");
+
+  const cloudTabs = [
+    { id: "payg" as const, label: "Pay-as-you-go", year1: data.cloud_payg_year1_usd ?? data.cloud_year1_usd, year3: data.cloud_payg_year3_usd ?? data.cloud_year3_usd, rows: data.cloud_cost_rows_payg ?? data.cost_rows },
+    { id: "1yr"  as const, label: "1-Year Reserved", year1: data.cloud_year1_usd, year3: data.cloud_year3_usd, rows: data.cloud_cost_rows_1yr ?? data.cost_rows },
+    { id: "3yr"  as const, label: "3-Year Reserved", year1: data.cloud_3yr_year1_usd ?? data.cloud_year1_usd, year3: data.cloud_3yr_total_usd ?? data.cloud_year3_usd, rows: data.cloud_cost_rows_3yr ?? data.cost_rows },
+  ];
+  const onpremTabs = [
+    { id: "1yr" as const, label: "1-Year",  year1: data.onprem_year1_usd, year3: data.onprem_year1_usd, rows: data.onprem_cost_rows ?? data.cost_rows },
+    { id: "3yr" as const, label: "3-Year",  year1: data.onprem_year3_usd, year3: data.onprem_year3_usd, rows: data.onprem_cost_rows ?? data.cost_rows },
+  ];
+
+  const activeCloud  = cloudTabs.find((t) => t.id === cloudSub)!;
+  const activeOnprem = onpremTabs.find((t) => t.id === onpremSub)!;
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3">
-          <p className="text-xs text-emerald-600 font-medium mb-2">☁ Cloud (Azure)</p>
-          <p className="text-lg font-bold text-emerald-700">{fmtUsd(data.cloud_year1_usd)} <span className="text-xs font-normal">yr1</span></p>
-          <p className="text-sm text-emerald-600">{fmtUsd(data.cloud_year3_usd)} <span className="text-xs">3yr</span></p>
-          <p className="text-xs text-emerald-500 mt-1">${data.cost_per_1m_tokens_cloud} / 1M tokens</p>
-        </div>
-        <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
-          <p className="text-xs text-slate-600 font-medium mb-2">🏢 On-Prem</p>
-          <p className="text-lg font-bold text-slate-700">{fmtUsd(data.onprem_year1_usd)} <span className="text-xs font-normal">yr1</span></p>
-          <p className="text-sm text-slate-600">{fmtUsd(data.onprem_year3_usd)} <span className="text-xs">3yr</span></p>
-          <p className="text-xs text-slate-500 mt-1">${data.cost_per_1m_tokens_onprem} / 1M tokens</p>
-        </div>
-      </div>
+      {/* Summary strip */}
       <div className="grid grid-cols-3 gap-2 text-center text-xs">
         <div className="rounded-lg bg-zinc-50 border p-2"><p className="text-zinc-400 mb-0.5">Yr1 Lower Cost</p><p className="font-semibold">{data.lower_cost_year1}</p></div>
         <div className="rounded-lg bg-zinc-50 border p-2"><p className="text-zinc-400 mb-0.5">3yr Lower Cost</p><p className="font-semibold">{data.lower_cost_year3}</p></div>
         <div className="rounded-lg bg-zinc-50 border p-2"><p className="text-zinc-400 mb-0.5">Break-even</p><p className="font-semibold">{data.breakeven_month ? `Mo ${data.breakeven_month}` : "None <36mo"}</p></div>
       </div>
-      <KV label="Architecture" value={data.architecture_type} />
-      <KV label="Deployment Model" value={data.deployment_model} />
-      {data.cost_rows?.length > 0 && (
-        <div className="rounded-xl border border-zinc-200 overflow-hidden">
-          <table className="w-full text-xs">
-            <thead><tr className="bg-zinc-50 border-b">
-              <th className="text-left px-3 py-2 text-zinc-500 font-medium">Category</th>
-              <th className="text-right px-3 py-2 text-zinc-500 font-medium">Year 1</th>
-              <th className="text-right px-3 py-2 text-zinc-500 font-medium">Year 3</th>
-            </tr></thead>
-            <tbody>
-              {data.cost_rows.map((row, i) => (
-                <tr key={i} className="border-b border-zinc-100 last:border-0">
-                  <td className="px-3 py-2 text-zinc-700">{row.category}</td>
-                  <td className="px-3 py-2 text-right font-mono">{fmtUsd(row.year1_usd)}</td>
-                  <td className="px-3 py-2 text-right font-mono">{fmtUsd(row.year3_usd)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+      {/* Main tabs: Cloud | On-Prem */}
+      <div className="flex gap-1 rounded-xl bg-zinc-100 p-1">
+        <button
+          onClick={() => setMainTab("cloud")}
+          className={`flex-1 rounded-lg py-2 text-xs font-semibold transition-all ${mainTab === "cloud" ? "bg-white shadow text-emerald-700" : "text-zinc-500 hover:text-zinc-700"}`}
+        >
+          ☁ Cloud (Azure)
+        </button>
+        <button
+          onClick={() => setMainTab("onprem")}
+          className={`flex-1 rounded-lg py-2 text-xs font-semibold transition-all ${mainTab === "onprem" ? "bg-white shadow text-slate-700" : "text-zinc-500 hover:text-zinc-700"}`}
+        >
+          🏢 On-Prem
+        </button>
+      </div>
+
+      {/* Cloud panel */}
+      {mainTab === "cloud" && (
+        <div className="space-y-3">
+          {/* Cloud sub-tabs */}
+          <div className="flex gap-1.5">
+            {cloudTabs.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setCloudSub(t.id)}
+                className={`flex-1 rounded-lg border py-2 text-xs font-medium transition-all ${cloudSub === t.id ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "border-zinc-200 text-zinc-500 hover:border-zinc-300"}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Active cloud term summary */}
+          <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 flex justify-between items-center">
+            <div>
+              <p className="text-xs text-emerald-600 font-medium mb-1">{activeCloud.label}</p>
+              <p className="text-xl font-bold text-emerald-700">{fmtUsd(activeCloud.year1)} <span className="text-xs font-normal">year 1</span></p>
+              <p className="text-sm text-emerald-600 mt-0.5">{fmtUsd(activeCloud.year3)} <span className="text-xs">3-year total</span></p>
+            </div>
+            <div className="text-right text-xs text-emerald-500">
+              <p>${data.cost_per_1m_tokens_cloud}</p>
+              <p>per 1M tokens</p>
+            </div>
+          </div>
+
+          {/* Cloud cost breakdown */}
+          <CostTable rows={activeCloud.rows} col1Label="Year 1 Cost" col2Label="3-Year Cost" />
         </div>
       )}
+
+      {/* On-Prem panel */}
+      {mainTab === "onprem" && (
+        <div className="space-y-3">
+          {/* On-Prem sub-tabs */}
+          <div className="flex gap-1.5">
+            {onpremTabs.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setOnpremSub(t.id)}
+                className={`flex-1 rounded-lg border py-2 text-xs font-medium transition-all ${onpremSub === t.id ? "bg-slate-100 border-slate-300 text-slate-700" : "border-zinc-200 text-zinc-500 hover:border-zinc-300"}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Active on-prem term summary */}
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 flex justify-between items-center">
+            <div>
+              <p className="text-xs text-slate-600 font-medium mb-1">On-Prem · {activeOnprem.label}</p>
+              <p className="text-xl font-bold text-slate-700">{fmtUsd(activeOnprem.year1)} <span className="text-xs font-normal">{onpremSub === "1yr" ? "year 1 total" : "3-year total"}</span></p>
+            </div>
+            <div className="text-right text-xs text-slate-500">
+              <p>${data.cost_per_1m_tokens_onprem}</p>
+              <p>per 1M tokens</p>
+            </div>
+          </div>
+
+          {/* On-prem cost breakdown — show year1 or year3 col depending on sub-tab */}
+          {(activeOnprem.rows?.length > 0) && (
+            <div className="rounded-xl border border-zinc-200 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-zinc-50 border-b">
+                    <th className="text-left px-3 py-2 text-zinc-500 font-medium">Cost Element</th>
+                    <th className="text-right px-3 py-2 text-zinc-500 font-medium">{onpremSub === "1yr" ? "Year 1 Cost" : "3-Year Cost"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeOnprem.rows.map((row, i) => (
+                    <tr key={i} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
+                      <td className="px-3 py-2 text-zinc-700">{row.category}</td>
+                      <td className="px-3 py-2 text-right font-mono text-zinc-800">{fmtUsd(onpremSub === "1yr" ? row.year1_usd : row.year3_usd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-zinc-100 border-t border-zinc-200 font-semibold">
+                    <td className="px-3 py-2 text-zinc-700">Total</td>
+                    <td className="px-3 py-2 text-right font-mono text-zinc-900">{fmtUsd(onpremSub === "1yr" ? data.onprem_year1_usd : data.onprem_year3_usd)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      <KV label="Architecture" value={data.architecture_type} />
+      <KV label="Deployment Model" value={data.deployment_model} />
     </div>
   );
 }

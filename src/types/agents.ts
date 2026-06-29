@@ -137,8 +137,14 @@ export interface DeploymentTcoOutput {
   deployment_model: "Public Cloud" | "On-prem / Private AI-in-a-Box" | "Hybrid" | "Edge";
   cloud_provider: string;
   cloud_vm_sku: string;
-  cloud_year1_usd: number;
-  cloud_year3_usd: number;
+  // Cloud totals by term
+  cloud_year1_usd: number;       // 1yr reserved
+  cloud_year3_usd: number;       // 1yr reserved × 3
+  cloud_payg_year1_usd: number;
+  cloud_payg_year3_usd: number;
+  cloud_3yr_year1_usd: number;
+  cloud_3yr_total_usd: number;
+  // On-prem totals
   onprem_year1_usd: number;
   onprem_year3_usd: number;
   cost_per_1m_tokens_cloud: number;
@@ -146,7 +152,12 @@ export interface DeploymentTcoOutput {
   lower_cost_year1: "Cloud" | "On-prem";
   lower_cost_year3: "Cloud" | "On-prem";
   breakeven_month: number | null;
-  cost_rows: TcoCostRow[];
+  // Per-term cost breakdown rows
+  cloud_cost_rows_payg: TcoCostRow[];
+  cloud_cost_rows_1yr: TcoCostRow[];
+  cloud_cost_rows_3yr: TcoCostRow[];
+  onprem_cost_rows: TcoCostRow[];
+  cost_rows: TcoCostRow[];  // legacy alias → onprem_cost_rows
   assumptions: string[];
 }
 
