@@ -13,7 +13,7 @@ import { AgentMetrics, calcCost, summarizeMetrics, RunMetrics } from "./observab
 const GROQ_API_KEY = process.env.GROQ_API_KEY ?? "";
 const MODEL_PRIMARY   = "llama-3.1-8b-instant";
 const MODEL_FALLBACK  = "gemma2-9b-it";
-const MODEL_FALLBACK2 = "llama3-8b-8192";
+const MODEL_FALLBACK2 = "llama-3.2-3b-preview";
 
 // ── Groq caller — raw https (bypasses Next.js fetch patching) ─────────────────
 
