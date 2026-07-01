@@ -169,6 +169,7 @@ export async function fetchModelsFromHuggingFace(
       .filter((m) => !needsOnPrem || m.deployment_type === "on-prem")
       .slice(0, topN);
 
+    console.log(`[HuggingFace] fetched ${hfModels.length} raw → ${parsed.length} usable models for [${sizeHint}]`);
     modelCache.set(cacheKey, parsed);
     return parsed;
   } catch (err) {
