@@ -143,10 +143,20 @@ function calcSequenceLength(intake: IntakeOutput): number {
 function deriveModelSizeHint(
   pattern: WorkloadPattern,
   concurrentUsers = 0,
+  lifecycleStage: "poc" | "pilot" | "production" = "production",
+  latencyMs = 2000,
+  budgetUsdMonth = 50000,
 ): "<7B" | "7B-70B" | ">70B" {
-  if (["Training"].includes(pattern)) return ">70B";
+  // POC + tight budget → small model sufficient
+  if (lifecycleStage === "poc" && budgetUsdMonth < 5000) return "<7B";
+  // Very low latency + low concurrency → small fast model
+  if (latencyMs < 300 && concurrentUsers < 50) return "<7B";
+  // Structured/non-generative workloads → small model
+  if (pattern === "Predictive ML" || pattern === "Computer Vision") return "<7B";
+  // Large-scale training always needs >70B
+  if (pattern === "Training") return ">70B";
   if (pattern === "Agentic Automation") return ">70B";
-  // High-concurrency RAG needs a large model for sufficient KV cache throughput
+  // High-concurrency RAG needs a large model for KV cache throughput
   if (pattern === "RAG / Enterprise Copilot" && concurrentUsers >= 100) return "7B-70B";
   if (["Fine-tuning", "RAG / Enterprise Copilot"].includes(pattern)) return "7B-70B";
   return "7B-70B";
@@ -184,6 +194,9 @@ export function runClassifier(intake: IntakeOutput): ClassifierOutput {
 export function deriveModelSizeHintFromClassifier(
   pattern: WorkloadPattern,
   concurrentUsers = 0,
+  lifecycleStage: "poc" | "pilot" | "production" = "production",
+  latencyMs = 2000,
+  budgetUsdMonth = 50000,
 ): "<7B" | "7B-70B" | ">70B" {
-  return deriveModelSizeHint(pattern, concurrentUsers);
+  return deriveModelSizeHint(pattern, concurrentUsers, lifecycleStage, latencyMs, budgetUsdMonth);
 }

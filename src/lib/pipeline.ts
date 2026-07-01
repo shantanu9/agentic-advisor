@@ -5,7 +5,7 @@ import {
   StageResult, PipelineResult, ModelSpec,
 } from "@/types/agents";
 import { runClassifier, deriveModelSizeHintFromClassifier } from "./classifier";
-import { retrieveModels, formatModelsForPrompt, getAllModels } from "./model-db";
+import { retrieveModelsWithMcp, formatModelsForPrompt, getAllModels } from "./model-db";
 import { runSizingEngine } from "./sizing-engine";
 import { calcCloudTco, calcOnPremTco, calcBreakevenMonth } from "./azure-pricing";
 import { AgentMetrics, calcCost, summarizeMetrics, RunMetrics } from "./observability";
@@ -284,11 +284,21 @@ export async function runPipeline(
 
   // ── Stage 3: Model Selector Agent (LLM + RAG) ────────────────────────────
   onProgress?.("model_selector", "start");
-  const modelSizeHint = deriveModelSizeHintFromClassifier(classifierOutput.workload_pattern, intakeOutput.concurrent_users);
-  const retrievedModels = retrieveModels(
+  const modelSizeHint = deriveModelSizeHintFromClassifier(
+    classifierOutput.workload_pattern,
+    intakeOutput.concurrent_users,
+    intakeOutput.lifecycle_stage,
+    intakeOutput.latency_requirement_ms,
+    intakeOutput.budget_usd_month,
+  );
+  const retrievedModels = await retrieveModelsWithMcp(
     classifierOutput.workload_pattern,
     modelSizeHint,
-    intakeOutput.compliance
+    intakeOutput.compliance,
+    classifierOutput.total_sequence_length,
+    intakeOutput.latency_requirement_ms,
+    intakeOutput.budget_usd_month,
+    intakeOutput.lifecycle_stage,
   );
   const modelSelectorSystem = buildModelSelectorPrompt(retrievedModels);
   const modelSelectorUser = `Workload: ${classifierOutput.workload_pattern}

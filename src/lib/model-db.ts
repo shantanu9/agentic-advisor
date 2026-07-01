@@ -1,4 +1,5 @@
 import { ModelSpec, WorkloadPattern } from "@/types/agents";
+import { fetchModelsFromHuggingFace } from "@/mcp/model-selector-server";
 
 // Curated model list — fetched from HuggingFace config.json and cached here.
 // To refresh: call fetchAndCacheModels() at build time or via an admin route.
@@ -164,6 +165,10 @@ export function retrieveModels(
   workloadPattern: WorkloadPattern,
   modelSizeHint: "<7B" | "7B-70B" | ">70B",
   compliance: string[],
+  totalSequenceLength = 0,
+  latencyMs = 2000,
+  budgetUsdMonth = 50000,
+  lifecycleStage: "poc" | "pilot" | "production" = "production",
   topN = 5
 ): ModelSpec[] {
   const preferredTiers = WORKLOAD_TIER_MAP[workloadPattern] ?? ["small", "medium", "large"];
@@ -171,22 +176,110 @@ export function retrieveModels(
 
   const sizeFilter = (m: ModelSpec) => {
     if (modelSizeHint === "<7B")    return m.parameters_b < 7;
-    if (modelSizeHint === "7B-70B") return m.parameters_b >= 7 && m.parameters_b <= 72; // include 70–72B tier
-    return m.parameters_b >= 70; // ">70B" includes 70B boundary upward
+    if (modelSizeHint === "7B-70B") return m.parameters_b >= 7 && m.parameters_b <= 72;
+    return m.parameters_b >= 70;
   };
 
   const deploymentFilter = (m: ModelSpec) =>
     allowedDeployment.includes(m.deployment_type) || m.deployment_type === "both";
 
-  const scored = MODEL_CATALOG.filter(sizeFilter).filter(deploymentFilter).map((m) => {
-    const tierScore = preferredTiers.indexOf(m.tier) !== -1
-      ? (preferredTiers.length - preferredTiers.indexOf(m.tier)) * 10
-      : 0;
-    const sizeScore = modelSizeHint === ">70B" ? (m.parameters_b > 70 ? 20 : 0)
-      : modelSizeHint === "<7B" ? (m.parameters_b < 7 ? 20 : 0)
-      : 10;
-    return { model: m, score: tierScore + sizeScore };
-  });
+  // Hard filter — model must support the full sequence length
+  const contextFilter = (m: ModelSpec) =>
+    totalSequenceLength === 0 || m.context_length >= totalSequenceLength;
+
+  const scored = MODEL_CATALOG
+    .filter(sizeFilter)
+    .filter(deploymentFilter)
+    .filter(contextFilter)
+    .map((m) => {
+      const tierScore = preferredTiers.indexOf(m.tier) !== -1
+        ? (preferredTiers.length - preferredTiers.indexOf(m.tier)) * 10
+        : 0;
+      const sizeScore = modelSizeHint === ">70B" ? (m.parameters_b > 70 ? 20 : 0)
+        : modelSizeHint === "<7B" ? (m.parameters_b < 7 ? 20 : 0)
+        : 10;
+
+      // Latency score — tight latency favours smaller/faster models
+      const latencyScore =
+        latencyMs < 300  ? (m.parameters_b < 15 ? 20 : m.parameters_b < 40 ? 8 : 0)
+        : latencyMs < 800 ? (m.parameters_b < 40 ? 10 : 5)
+        : 5;
+
+      // Budget score — tight budget favours smaller models
+      const budgetScore =
+        budgetUsdMonth < 5000  ? (m.parameters_b < 15 ? 20 : m.parameters_b < 40 ? 8 : 0)
+        : budgetUsdMonth < 20000 ? (m.parameters_b < 40 ? 10 : 5)
+        : 5;
+
+      // Lifecycle score — POC favours small, production favours large
+      const lifecycleScore =
+        lifecycleStage === "poc"        ? (m.parameters_b < 15 ? 15 : m.parameters_b < 40 ? 5 : 0)
+        : lifecycleStage === "production" ? (m.parameters_b >= 70 ? 15 : 5)
+        : 5;
+
+      return { model: m, score: tierScore + sizeScore + latencyScore + budgetScore + lifecycleScore };
+    });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, topN).map((s) => s.model);
+}
+
+// Merged retrieval — static catalog + live HuggingFace models
+export async function retrieveModelsWithMcp(
+  workloadPattern: WorkloadPattern,
+  modelSizeHint: "<7B" | "7B-70B" | ">70B",
+  compliance: string[],
+  totalSequenceLength = 0,
+  latencyMs = 2000,
+  budgetUsdMonth = 50000,
+  lifecycleStage: "poc" | "pilot" | "production" = "production",
+  topN = 5,
+): Promise<ModelSpec[]> {
+  const liveModels = await fetchModelsFromHuggingFace(modelSizeHint, workloadPattern, compliance, 10);
+
+  // Merge — deduplicate by model_id, live models enrich the catalog
+  const seenIds = new Set(MODEL_CATALOG.map((m) => m.model_id));
+  const merged = [
+    ...MODEL_CATALOG,
+    ...liveModels.filter((m) => !seenIds.has(m.model_id)),
+  ];
+
+  // Re-run full scoring pipeline over the merged catalog
+  const preferredTiers = WORKLOAD_TIER_MAP[workloadPattern] ?? ["small", "medium", "large"];
+  const allowedDeployment = deploymentTypeFromCompliance(compliance);
+
+  const sizeFilter = (m: ModelSpec) => {
+    if (modelSizeHint === "<7B")    return m.parameters_b < 7;
+    if (modelSizeHint === "7B-70B") return m.parameters_b >= 7 && m.parameters_b <= 72;
+    return m.parameters_b >= 70;
+  };
+
+  const contextFilter = (m: ModelSpec) =>
+    totalSequenceLength === 0 || m.context_length >= totalSequenceLength;
+
+  const deploymentFilter = (m: ModelSpec) =>
+    allowedDeployment.includes(m.deployment_type) || m.deployment_type === "both";
+
+  const scored = merged
+    .filter(sizeFilter)
+    .filter(deploymentFilter)
+    .filter(contextFilter)
+    .map((m) => {
+      const tierScore = preferredTiers.indexOf(m.tier) !== -1
+        ? (preferredTiers.length - preferredTiers.indexOf(m.tier)) * 10 : 0;
+      const sizeScore = modelSizeHint === ">70B" ? (m.parameters_b > 70 ? 20 : 0)
+        : modelSizeHint === "<7B" ? (m.parameters_b < 7 ? 20 : 0) : 10;
+      const latencyScore =
+        latencyMs < 300  ? (m.parameters_b < 15 ? 20 : m.parameters_b < 40 ? 8 : 0)
+        : latencyMs < 800 ? (m.parameters_b < 40 ? 10 : 5) : 5;
+      const budgetScore =
+        budgetUsdMonth < 5000  ? (m.parameters_b < 15 ? 20 : m.parameters_b < 40 ? 8 : 0)
+        : budgetUsdMonth < 20000 ? (m.parameters_b < 40 ? 10 : 5) : 5;
+      const lifecycleScore =
+        lifecycleStage === "poc"        ? (m.parameters_b < 15 ? 15 : m.parameters_b < 40 ? 5 : 0)
+        : lifecycleStage === "production" ? (m.parameters_b >= 70 ? 15 : 5) : 5;
+      return { model: m, score: tierScore + sizeScore + latencyScore + budgetScore + lifecycleScore };
+    });
 
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, topN).map((s) => s.model);

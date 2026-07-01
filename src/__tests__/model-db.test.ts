@@ -66,6 +66,47 @@ describe("getModelById", () => {
   });
 });
 
+describe("retrieveModels — context length hard filter", () => {
+  it("excludes Gemma 2 9B (ctx 8192) when sequence length is 9000", () => {
+    const models = retrieveModels("RAG / Enterprise Copilot", "7B-70B", [], 9000);
+    const gemma = models.find((m) => m.model_id === "google/gemma-2-9b-it");
+    expect(gemma).toBeUndefined();
+  });
+
+  it("excludes Mixtral 8x7B (ctx 32768) when sequence length is 35000", () => {
+    const models = retrieveModels("RAG / Enterprise Copilot", "7B-70B", [], 35000);
+    const mixtral = models.find((m) => m.model_id === "mistralai/Mixtral-8x7B-Instruct-v0.1");
+    expect(mixtral).toBeUndefined();
+  });
+
+  it("does not filter when totalSequenceLength is 0 (default)", () => {
+    const withFilter    = retrieveModels("RAG / Enterprise Copilot", "7B-70B", [], 9000);
+    const withoutFilter = retrieveModels("RAG / Enterprise Copilot", "7B-70B", [], 0);
+    expect(withoutFilter.length).toBeGreaterThanOrEqual(withFilter.length);
+  });
+});
+
+describe("retrieveModels — lifecycle + budget scoring", () => {
+  it("POC + $2000 budget returns no model over 15B", () => {
+    const models = retrieveModels("General LLM Inference", "<7B", [], 0, 2000, 2000, "poc");
+    for (const m of models) {
+      expect(m.parameters_b).toBeLessThan(15);
+    }
+  });
+
+  it("production RAG with no compliance scores Llama 70B highest", () => {
+    const models = retrieveModels("RAG / Enterprise Copilot", "7B-70B", [], 0, 2000, 50000, "production");
+    expect(models[0].model_id).toBe("meta-llama/Meta-Llama-3.1-70B-Instruct");
+  });
+
+  it("HIPAA compliance excludes all cloud-api models", () => {
+    const models = retrieveModels("RAG / Enterprise Copilot", "7B-70B", ["HIPAA"], 0, 2000, 50000, "production");
+    for (const m of models) {
+      expect(["on-prem", "both"]).toContain(m.deployment_type);
+    }
+  });
+});
+
 describe("getAllModels", () => {
   it("includes Llama 70B, Mixtral, and Qwen 72B", () => {
     const ids = getAllModels().map((m) => m.model_id);

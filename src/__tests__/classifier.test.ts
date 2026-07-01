@@ -188,4 +188,28 @@ describe("deriveModelSizeHintFromClassifier", () => {
   it("returns >70B for Agentic Automation", () => {
     expect(deriveModelSizeHintFromClassifier("Agentic Automation", 0)).toBe(">70B");
   });
+
+  it("returns <7B for POC lifecycle + budget under $5000", () => {
+    expect(deriveModelSizeHintFromClassifier("General LLM Inference", 10, "poc", 2000, 2000)).toBe("<7B");
+  });
+
+  it("returns <7B for latency <300ms + concurrency <50", () => {
+    expect(deriveModelSizeHintFromClassifier("RAG / Enterprise Copilot", 20, "production", 200, 50000)).toBe("<7B");
+  });
+
+  it("returns <7B for Predictive ML regardless of concurrency", () => {
+    expect(deriveModelSizeHintFromClassifier("Predictive ML", 200, "production", 2000, 50000)).toBe("<7B");
+  });
+
+  it("returns <7B for Computer Vision", () => {
+    expect(deriveModelSizeHintFromClassifier("Computer Vision", 50, "production", 2000, 50000)).toBe("<7B");
+  });
+
+  it("returns 7B-70B for production RAG with high concurrency", () => {
+    expect(deriveModelSizeHintFromClassifier("RAG / Enterprise Copilot", 200, "production", 2000, 50000)).toBe("7B-70B");
+  });
+
+  it("does NOT return <7B for POC if budget >= $5000", () => {
+    expect(deriveModelSizeHintFromClassifier("General LLM Inference", 10, "poc", 2000, 6000)).not.toBe("<7B");
+  });
 });
