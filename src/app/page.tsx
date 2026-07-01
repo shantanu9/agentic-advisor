@@ -631,10 +631,13 @@ export default function Home() {
     <div className="min-h-screen bg-zinc-50 font-sans flex flex-col">
       <header className="border-b border-zinc-200 bg-white px-6 py-4 flex items-center gap-4 shrink-0">
         <button onClick={() => setSidebarOpen((o) => !o)} className="text-zinc-400 hover:text-zinc-600">☰</button>
-        <div>
+        <div className="flex-1">
           <h1 className="text-xl font-bold text-zinc-900">Agentic Advisor</h1>
           <p className="text-xs text-zinc-400">4 LLM agents · 2 code engines · RAG model selection · Azure TCO</p>
         </div>
+        <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-xs font-semibold text-violet-700 select-none">
+          v2.0
+        </span>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
